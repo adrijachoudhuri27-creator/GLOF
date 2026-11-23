@@ -30,7 +30,7 @@ React 19, TypeScript, Vite, Tailwind CSS, D3, Recharts, Express, SQLite (better-
   and climate data (e.g. ERA5), then train and validate an actual model.
 
 ## Live demo
-[add link once deployed and tested in an incognito window]
+https://ai.studio/apps/366b5c7d-7038-4d65-8ba2-14bf28832c0c
 
 ## Run it locally
 Requires Node.js 20 or 22 (Node 26 breaks `better-sqlite3`).
