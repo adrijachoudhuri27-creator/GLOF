@@ -3,7 +3,7 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
-  AreaChart,
+  ComposedChart,
   Area,
   XAxis,
   YAxis,
@@ -148,7 +148,7 @@ export const LstmModelView: React.FC<Props> = ({ lake, metrics, modelSummary }) 
 
         <div className="h-[290px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={sequenceChartData}>
+            <ComposedChart data={sequenceChartData}>
               <defs>
                 <linearGradient id="lstmObservedGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#38BDF8" stopOpacity={0.28} />
@@ -204,7 +204,7 @@ export const LstmModelView: React.FC<Props> = ({ lake, metrics, modelSummary }) 
                 dot={{ r: 3, fill: '#F59E0B' }}
                 connectNulls={false}
               />
-            </AreaChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       </div>

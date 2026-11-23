@@ -6,10 +6,13 @@ interface Props {
   lake: GlacialLake;
 }
 
+import satelliteImgSrc from '../assets/images/himalayan_glacial_lake_satellite_1795417188697.jpg';
+import demImgSrc from '../assets/images/himalayan_glacial_lake_dem_1795417188268.jpg';
+
 type BandMode = 'rgb' | 'ndwi' | 'ndsi' | 'dem';
 
-const SATELLITE_IMG_SRC = '/src/assets/images/himalayan_glacial_lake_satellite_1795417188697.jpg';
-const DEM_IMG_SRC = '/src/assets/images/himalayan_glacial_lake_dem_1795417188268.jpg';
+const SATELLITE_IMG_SRC = satelliteImgSrc;
+const DEM_IMG_SRC = demImgSrc;
 
 export const SatelliteImagery: React.FC<Props> = ({ lake }) => {
   const [bandMode, setBandMode] = useState<BandMode>('rgb');

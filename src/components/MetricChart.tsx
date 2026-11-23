@@ -18,6 +18,7 @@ interface Props {
   color: string;
   unit?: string;
   decimals?: number;
+  higherIsWorse?: boolean;
 }
 
 export const MetricChart: React.FC<Props> = ({
@@ -27,15 +28,18 @@ export const MetricChart: React.FC<Props> = ({
   color,
   unit = '',
   decimals = 2,
+  higherIsWorse = true,
 }) => {
   const chartData = metrics.map((m) => ({
     ...m,
     formattedDate: format(new Date(m.timestamp), metrics.length > 36 ? 'MMM yy' : 'MMM dd, yy'),
   }));
 
+  const hasData = metrics.length > 0;
   const firstVal = Number(metrics[0]?.[dataKey] ?? 0);
   const latestVal = Number(metrics[metrics.length - 1]?.[dataKey] ?? 0);
   const delta = latestVal - firstVal;
+  const isWorse = higherIsWorse ? delta > 0 : delta < 0;
 
   return (
     <div className="bg-[#0D1117] p-5 rounded-xl border border-white/10 h-[310px] flex flex-col">
@@ -44,15 +48,14 @@ export const MetricChart: React.FC<Props> = ({
           <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-1">{title}</h3>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-mono font-semibold text-white tabular-nums">
-              {latestVal.toFixed(decimals)}
+              {hasData ? latestVal.toFixed(decimals) : '—'}
             </span>
             <span className="text-xs font-mono text-slate-400">{unit}</span>
           </div>
         </div>
         <div className="text-right font-mono text-xs tabular-nums">
-          <div className={delta >= 0 ? 'text-amber-400' : 'text-emerald-400'}>
-            {delta >= 0 ? '+' : ''}
-            {delta.toFixed(decimals)} {unit}
+          <div className={!hasData ? 'text-slate-500' : isWorse ? 'text-amber-400' : 'text-emerald-400'}>
+            {hasData ? `${delta >= 0 ? '+' : ''}${delta.toFixed(decimals)} ${unit}` : '—'}
           </div>
           <div className="text-[11px] text-slate-500">Window change</div>
         </div>

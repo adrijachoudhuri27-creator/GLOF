@@ -20,9 +20,12 @@ import {
   RefreshCw,
   Search,
   Activity,
+  Download,
+  ArrowUpDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
+import { downloadCsv, growthPct } from './utils';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
@@ -37,6 +40,17 @@ type Page =
   | 'Flood Simulation'
   | 'Risk Reports';
 
+type SortKey =
+  | 'name'
+  | 'region'
+  | 'dam_type'
+  | 'elevation'
+  | 'area_km2'
+  | 'growth'
+  | 'lstm_probability'
+  | 'population_at_risk'
+  | 'risk_score';
+
 function riskGlyph(level: GlacialLake['current_risk_level']) {
   if (level === 'Critical') return { glyph: '✖', color: 'text-red-400' };
   if (level === 'High') return { glyph: '▲', color: 'text-amber-400' };
@@ -48,7 +62,8 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('Dashboard');
   const [lakes, setLakes] = useState<GlacialLake[]>([]);
   const [selectedLakeId, setSelectedLakeId] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<LakeMetric[]>([]);
+  const [allMetrics, setAllMetrics] = useState<LakeMetric[]>([]);
+  const [metricsLoading, setMetricsLoading] = useState(false);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [modelSummary, setModelSummary] = useState<LstmModelSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,6 +71,8 @@ export default function App() {
   const [floodScenario, setFloodScenario] = useState<BreachScenario>('Average');
   const [timeWindowYears, setTimeWindowYears] = useState<1 | 3 | 5 | 10>(10);
   const [lakeSearch, setLakeSearch] = useState('');
+  const [riskFilter, setRiskFilter] = useState<'All' | GlacialLake['current_risk_level']>('All');
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'lstm_probability', dir: 'desc' });
 
   useEffect(() => {
     const init = async () => {
@@ -86,21 +103,30 @@ export default function App() {
     init();
   }, []);
 
+  // Always load the full 10-year series once per lake. The Time Series window (1/3/5/10Y)
+  // is applied client-side, so the LSTM view, reports and CSV export always use full history.
   useEffect(() => {
     if (!selectedLakeId) return;
-    const fetchMetrics = async () => {
+    const controller = new AbortController();
+    setMetricsLoading(true);
+    setAllMetrics([]); // never show the previous lake's data under the new lake's name
+    (async () => {
       try {
-        const res = await fetch(`/api/lakes/${selectedLakeId}/metrics?years=${timeWindowYears}`);
-        if (res.ok) {
-          const data: LakeMetric[] = await res.json();
-          setMetrics(data);
-        }
-      } catch (err) {
-        console.error(err);
+        const res = await fetch(`/api/lakes/${selectedLakeId}/metrics?years=10`, { signal: controller.signal });
+        if (res.ok) setAllMetrics(await res.json());
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') console.error(err);
+      } finally {
+        if (!controller.signal.aborted) setMetricsLoading(false);
       }
-    };
-    fetchMetrics();
-  }, [selectedLakeId, timeWindowYears]);
+    })();
+    return () => controller.abort();
+  }, [selectedLakeId]);
+
+  const metrics = useMemo(
+    () => allMetrics.slice(-timeWindowYears * 12),
+    [allMetrics, timeWindowYears]
+  );
 
   const selectedLake = useMemo(
     () => lakes.find((l) => l.id === selectedLakeId) || lakes[0] || null,
@@ -119,6 +145,39 @@ export default function App() {
     () => Array.from(new Set(filteredLakes.map((l) => l.region))).sort(),
     [filteredLakes]
   );
+
+  const tableLakes = useMemo(() => {
+    const q = lakeSearch.trim().toLowerCase();
+    const rows = lakes.filter(
+      (l) =>
+        (riskFilter === 'All' || l.current_risk_level === riskFilter) &&
+        (!q || l.name.toLowerCase().includes(q) || l.region.toLowerCase().includes(q) || l.id.toLowerCase().includes(q))
+    );
+    const val = (l: GlacialLake): string | number =>
+      sort.key === 'growth' ? growthPct(l.area_km2, l.area_10y_ago_km2) : (l[sort.key] as string | number);
+    return [...rows].sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number);
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [lakes, lakeSearch, riskFilter, sort]);
+
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'name' || key === 'region' || key === 'dam_type' ? 'asc' : 'desc' }
+    );
+
+  const exportRegistryCsv = () =>
+    downloadCsv('glof_lake_registry.csv', [
+      ['id', 'name', 'region', 'dam_type', 'elevation_m', 'area_km2', 'area_10y_ago_km2', 'growth_pct', 'lstm_probability', 'risk_level', 'population_at_risk'],
+      ...tableLakes.map((l) => [
+        l.id, l.name, l.region, l.dam_type, l.elevation, l.area_km2, l.area_10y_ago_km2,
+        growthPct(l.area_km2, l.area_10y_ago_km2).toFixed(1), l.lstm_probability, l.current_risk_level, l.population_at_risk,
+      ]),
+    ]);
 
   if (loading) {
     return (
@@ -165,11 +224,12 @@ export default function App() {
   const avgExpansionPct =
     lakes.length > 0
       ? (
-          lakes.reduce((acc, l) => acc + ((l.area_km2 - l.area_10y_ago_km2) / l.area_10y_ago_km2) * 100, 0) /
+          lakes.reduce((acc, l) => acc + growthPct(l.area_km2, l.area_10y_ago_km2), 0) /
           lakes.length
         ).toFixed(1)
       : '0.0';
   const totalPopRisk = lakes.reduce((acc, l) => acc + l.population_at_risk, 0);
+  const regionCount = new Set(lakes.map((l) => l.region)).size;
 
   return (
     <div className="min-h-screen bg-[#07090E] text-slate-200 flex flex-col lg:flex-row">
@@ -257,7 +317,7 @@ export default function App() {
               </div>
             ))}
             {groupedRegions.length === 0 && (
-              <p className="text-xs text-slate-500 px-2 py-4 text-center">No lakes match "{lakeSearch}"</p>
+              <p className="text-xs text-slate-500 px-2 py-4 text-center">No lakes match &quot;{lakeSearch}&quot;</p>
             )}
           </div>
         </div>
@@ -299,7 +359,7 @@ export default function App() {
 
         <AnimatePresence mode="wait">
           <motion.div
-            key={currentPage + (selectedLake?.id || '')}
+            key={currentPage}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
@@ -323,7 +383,7 @@ export default function App() {
                         <div className="text-2xl font-mono font-semibold text-white mt-1 tabular-nums">
                           {lakes.length}
                         </div>
-                        <div className="text-[11px] font-mono text-slate-500 mt-1">5 Himalayan basins</div>
+                        <div className="text-[11px] font-mono text-slate-500 mt-1">{regionCount} Himalayan regions</div>
                       </div>
                       <div className="bg-[#0D1117] p-4 rounded-xl border border-white/10">
                         <div className="text-xs text-slate-400">LSTM Model Accuracy</div>
@@ -400,49 +460,100 @@ export default function App() {
                   <div className="px-6 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-4">
                     <div>
                       <h3 className="text-sm font-semibold text-white">
-                        20 Glacial Lakes — 10-Year Historical & Geospatial Risk Matrix
+                        {tableLakes.length} of {lakes.length} Glacial Lakes — 10-Year Historical & Geospatial Risk Matrix
                       </h3>
                       <p className="text-xs text-slate-400 mt-0.5 font-mono">
-                        Click any row to focus dashboards, LSTM predictions, and flood simulation on that lake
+                        Click a row (or press Enter) to focus the dashboards on that lake · click a column header to sort
                       </p>
                     </div>
-                    <button
-                      onClick={() => setCurrentPage('LSTM Predictions')}
-                      className="px-3.5 py-1.5 bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-sky-300 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0"
-                    >
-                      Inspect LSTM Model (98.5%)
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1 p-1 bg-[#07090E] border border-white/10 rounded-lg" role="group" aria-label="Filter by risk level">
+                        {(['All', 'Critical', 'High', 'Moderate', 'Low'] as const).map((lvl) => (
+                          <button
+                            key={lvl}
+                            onClick={() => setRiskFilter(lvl)}
+                            aria-pressed={riskFilter === lvl}
+                            className={cn(
+                              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap border',
+                              riskFilter === lvl
+                                ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                                : 'text-slate-400 hover:text-slate-200 border-transparent'
+                            )}
+                          >
+                            {lvl}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        onClick={exportRegistryCsv}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-[#07090E] hover:bg-white/5 border border-white/15 text-slate-200 text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        <Download className="w-3.5 h-3.5" /> CSV
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage('LSTM Predictions')}
+                        className="px-3.5 py-1.5 bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-sky-300 text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        Inspect LSTM Model
+                      </button>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
                         <tr className="border-b border-white/10 text-slate-400 font-mono bg-[#07090E]/60">
-                          <th className="py-3 px-4 font-medium">Lake</th>
-                          <th className="py-3 px-4 font-medium">Region</th>
-                          <th className="py-3 px-4 font-medium">Dam Type</th>
-                          <th className="py-3 px-4 font-medium text-right">Elevation</th>
-                          <th className="py-3 px-4 font-medium text-right">Area (2026)</th>
-                          <th className="py-3 px-4 font-medium text-right">10Y Growth</th>
-                          <th className="py-3 px-4 font-medium text-right">LSTM Prob</th>
-                          <th className="py-3 px-4 font-medium text-right">Pop. Exposed</th>
-                          <th className="py-3 px-4 font-medium">Status</th>
+                          {([
+                            { key: 'name', label: 'Lake', right: false },
+                            { key: 'region', label: 'Region', right: false },
+                            { key: 'dam_type', label: 'Dam Type', right: false },
+                            { key: 'elevation', label: 'Elevation', right: true },
+                            { key: 'area_km2', label: 'Area (2026)', right: true },
+                            { key: 'growth', label: '10Y Growth', right: true },
+                            { key: 'lstm_probability', label: 'LSTM Prob', right: true },
+                            { key: 'population_at_risk', label: 'Pop. Exposed', right: true },
+                            { key: 'risk_score', label: 'Status', right: false },
+                          ] as { key: SortKey; label: string; right: boolean }[]).map((col) => (
+                            <th
+                              key={col.key}
+                              scope="col"
+                              aria-sort={sort.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                              className={cn('font-medium', col.right && 'text-right')}
+                            >
+                              <button
+                                onClick={() => toggleSort(col.key)}
+                                className={cn(
+                                  'w-full flex items-center gap-1 py-3 px-4 hover:text-slate-200 transition-colors',
+                                  col.right && 'justify-end',
+                                  sort.key === col.key && 'text-sky-300'
+                                )}
+                              >
+                                {col.label}
+                                <ArrowUpDown className={cn('w-3 h-3 shrink-0', sort.key === col.key ? 'opacity-100' : 'opacity-30')} />
+                              </button>
+                            </th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
-                        {lakes.map((lake) => {
-                          const growthPct = (
-                            ((lake.area_km2 - lake.area_10y_ago_km2) / lake.area_10y_ago_km2) *
-                            100
-                          ).toFixed(1);
+                        {tableLakes.map((lake) => {
+                          const growth = growthPct(lake.area_km2, lake.area_10y_ago_km2).toFixed(1);
                           const rg = riskGlyph(lake.current_risk_level);
                           const isSelected = lake.id === selectedLake.id;
                           return (
                             <tr
                               key={lake.id}
                               onClick={() => setSelectedLakeId(lake.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  setSelectedLakeId(lake.id);
+                                }
+                              }}
+                              tabIndex={0}
+                              aria-selected={isSelected}
                               className={cn(
-                                'cursor-pointer transition-colors',
+                                'cursor-pointer transition-colors focus:outline-none focus-visible:bg-sky-500/10',
                                 isSelected ? 'bg-sky-500/10' : 'hover:bg-white/[0.03]'
                               )}
                             >
@@ -456,7 +567,7 @@ export default function App() {
                                 {lake.area_km2.toFixed(2)} km²
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono text-amber-400 tabular-nums">
-                                +{growthPct}%
+                                {Number(growth) >= 0 ? '+' : ''}{growth}%
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono text-sky-400 tabular-nums">
                                 {(lake.lstm_probability * 100).toFixed(1)}%
@@ -470,6 +581,13 @@ export default function App() {
                             </tr>
                           );
                         })}
+                        {tableLakes.length === 0 && (
+                          <tr>
+                            <td colSpan={9} className="py-8 px-4 text-center text-slate-500">
+                              No lakes match the current filters.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -479,10 +597,10 @@ export default function App() {
 
             {currentPage === 'LSTM Predictions' && selectedLake && (
               <div className="space-y-6">
-                <LstmModelView lake={selectedLake} metrics={metrics} modelSummary={modelSummary} />
+                <LstmModelView lake={selectedLake} metrics={allMetrics} modelSummary={modelSummary} />
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <RiskRadar lake={selectedLake} />
-                  <RiskAssessment lake={selectedLake} metrics={metrics} />
+                  <RiskAssessment lake={selectedLake} metrics={allMetrics} />
                 </div>
               </div>
             )}
@@ -495,7 +613,7 @@ export default function App() {
                       10-Year Historical & Geospatial Risk Trends — {selectedLake.name}
                     </h2>
                     <p className="text-xs text-slate-400 font-mono mt-0.5 tabular-nums">
-                      Showing {metrics.length} monthly observations ({timeWindowYears}Y horizon) · Surface Area 2016: {selectedLake.area_10y_ago_km2.toFixed(2)} km² → 2026: {selectedLake.area_km2.toFixed(2)} km²
+                      {metricsLoading ? 'Loading observations…' : `Showing ${metrics.length} monthly observations (${timeWindowYears}Y horizon)`} · Surface Area 2016: {selectedLake.area_10y_ago_km2.toFixed(2)} km² → 2026: {selectedLake.area_km2.toFixed(2)} km²
                     </p>
                   </div>
 
@@ -547,6 +665,7 @@ export default function App() {
                     title="Glacier Ice Thickness"
                     dataKey="ice_thickness"
                     color="#10B981"
+                    higherIsWorse={false}
                     unit="m"
                     decimals={2}
                   />
@@ -657,7 +776,7 @@ export default function App() {
             )}
 
             {currentPage === 'Risk Reports' && selectedLake && (
-              <RiskReport lake={selectedLake} metrics={metrics} />
+              <RiskReport lake={selectedLake} metrics={allMetrics} />
             )}
           </motion.div>
         </AnimatePresence>

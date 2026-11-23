@@ -3,6 +3,7 @@ import { GlacialLake, LakeMetric } from '../types';
 import { FileText, Download, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { computeHydrology } from './FloodMap';
+import { downloadCsv, growthPct } from '../utils';
 
 interface Props {
   lake: GlacialLake;
@@ -11,43 +12,35 @@ interface Props {
 
 export const RiskReport: React.FC<Props> = ({ lake, metrics }) => {
   const hydroWorst = computeHydrology(lake, 'Worst');
-  const expansion10Y = (((lake.area_km2 - lake.area_10y_ago_km2) / lake.area_10y_ago_km2) * 100).toFixed(1);
+  const expansion10Y = growthPct(lake.area_km2, lake.area_10y_ago_km2).toFixed(1);
 
   const exportCsv = () => {
-    const headers = [
-      'timestamp',
-      'lake_id',
-      'lake_name',
-      'water_level_m',
-      'surface_area_km2',
-      'temperature_c',
-      'precipitation_mm',
-      'ice_thickness_m',
-      'lstm_risk_prob',
-      'predicted_signal',
-    ];
-    const rows = metrics.map((m) => [
-      m.timestamp.slice(0, 10),
-      lake.id,
-      `"${lake.name}"`,
-      m.water_level,
-      m.surface_area,
-      m.temperature,
-      m.precipitation,
-      m.ice_thickness,
-      m.lstm_risk_prob,
-      m.predicted_signal,
+    downloadCsv(`${lake.id}_${lake.name.replace(/\s+/g, '_')}_10Y_GLOF_Metrics.csv`, [
+      [
+        'timestamp',
+        'lake_id',
+        'lake_name',
+        'water_level_m',
+        'surface_area_km2',
+        'temperature_c',
+        'precipitation_mm',
+        'ice_thickness_m',
+        'lstm_risk_prob',
+        'predicted_signal',
+      ],
+      ...metrics.map((m) => [
+        m.timestamp.slice(0, 10),
+        lake.id,
+        lake.name,
+        m.water_level,
+        m.surface_area,
+        m.temperature,
+        m.precipitation,
+        m.ice_thickness,
+        m.lstm_risk_prob,
+        m.predicted_signal,
+      ]),
     ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `${lake.id}_${lake.name.replace(/\s+/g, '_')}_10Y_GLOF_Metrics.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   return (

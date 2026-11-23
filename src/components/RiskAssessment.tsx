@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GlacialLake, LakeMetric } from '../types';
 import { Brain, Loader2, ShieldCheck } from 'lucide-react';
 import Markdown from 'react-markdown';
@@ -13,6 +13,12 @@ export const RiskAssessment: React.FC<Props> = ({ lake }) => {
   const [sourceTag, setSourceTag] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAssessment(null);
+    setSourceTag(null);
+    setError(null);
+  }, [lake.id]);
 
   const generateAssessment = async () => {
     setLoading(true);
